@@ -12,6 +12,7 @@ ALIAS = re.compile(r"\((?:далее\s*[-–—]?\s*)?([А-ЯЁA-Z][А-ЯЁA-Z0-
 STRUCTURE = re.compile(r"состоит из|включает следующие.*подразделени|структур[ауы].*подразделени|consists of", re.I)
 ACTION = re.compile(r"обеспеч|осуществ|провод|проведен|разраб|организ|контрол|провер|оценк|анализ|мониторинг|согласов|утвержд|исполня(?:ет|ют|ть)\b|^исполнение\b|подготавли|подготовк|взаимодейств|формир|участи|аудит|рассматр|запраш|manage|review|audit|monitor|approve|report", re.I)
 PROHIBITION = re.compile(r"\b(?:не\s+име(?:ет|ют)\s+права|не\s+вправе|запрещ\w*)\b", re.I)
+PERMISSION = re.compile(r"\b(?:име(?:ет|ют)\s+право|вправе)\b", re.I)
 
 
 def stable_id(*parts: str) -> str:
@@ -138,7 +139,7 @@ def extract_functions(doc: ParsedDocument, units: list[OrganizationalUnit]) -> l
                 explicit = False
             if not owners and inherited:
                 owners, _, _, explicit = inherited
-            kind = "PROHIBITION" if PROHIBITION.search(body) else "RIGHT" if "имеют право" in body or "имеет право" in body else inherited[2] if inherited else "FUNCTION"
+            kind = "PROHIBITION" if PROHIBITION.search(body) else "RIGHT" if PERMISSION.search(body) else inherited[2] if inherited else "FUNCTION"
             contexts[clause.section] = (owners or roots, clause, kind, explicit)
             continue
         if clause.section in structural_parents:
@@ -154,6 +155,8 @@ def extract_functions(doc: ParsedDocument, units: list[OrganizationalUnit]) -> l
         # This classification is local and does not affect following siblings.
         if PROHIBITION.match(body):
             kind = "PROHIBITION"
+        elif kind != "PROHIBITION" and PERMISSION.match(body):
+            kind = "RIGHT"
         if STRUCTURE.search(owner_clause.text) or re.search(r"подчиняются|составе следующих должностей", owner_clause.text, re.I):
             continue
         if len(body) < 12:
