@@ -59,7 +59,7 @@ def analyze_parsed(before: ParsedDocument, after: ParsedDocument, mode="determin
     if not before_units or not after_units:
         warnings.append("No organizational units were extracted on at least one side; comparison coverage is incomplete.")
     result = AnalysisResult(
-        analysis_id=sha256(f"v3:{mode}:{before.name}:{before.sha256}:{after.name}:{after.sha256}".encode()).hexdigest()[:24],
+        analysis_id=sha256(f"v4:{mode}:{before.name}:{before.sha256}:{after.name}:{after.sha256}".encode()).hexdigest()[:24],
         before_document=before.name, after_document=after.name, units=before_units + after_units,
         transformations=transformations, function_matches=matches, findings=findings,
         summary=Summary(), analysis_mode=mode, agent_trace=trace, warnings=warnings,
