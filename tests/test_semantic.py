@@ -1,4 +1,5 @@
 import json
+import traceback
 from types import SimpleNamespace
 
 import httpx
@@ -21,12 +22,15 @@ def fake_client(value, status="completed"):
     return SimpleNamespace(responses=SimpleNamespace(parse=lambda **kwargs: SimpleNamespace(output_parsed=value, status=status)))
 
 
-def test_official_sdk_structured_output_roundtrip(document_pair):
+@pytest.mark.parametrize("model", ["test-model", "gpt-6-astra"])
+def test_official_sdk_structured_output_roundtrip(document_pair, model):
     calls = []
     def handle(request):
         body = json.loads(request.content)
         calls.append(body)
-        assert body["model"] == "test-model"
+        assert body["model"] == model
+        if model == "gpt-6-astra":
+            assert body["reasoning"] == {"effort": "low"}
         assert body["store"] is False
         assert body["text"]["format"]["type"] == "json_schema"
         assert body["text"]["format"]["strict"] is True
@@ -38,7 +42,7 @@ def test_official_sdk_structured_output_roundtrip(document_pair):
         })
     with OpenAI(api_key="test-placeholder", http_client=httpx.Client(transport=httpx.MockTransport(handle))) as client:
         before, after = [parse_document(raw, name) for raw, name in zip(document_pair, ["before.docx", "after.docx"])]
-        result = analyze_parsed(before, after, "semantic", OpenAISemanticAnalyzer(client, "test-model"))
+        result = analyze_parsed(before, after, "semantic", OpenAISemanticAnalyzer(client, model))
     assert len(calls) == 1
     assert result.analysis_mode == "semantic"
     assert "Reviewing semantic relations with OpenAI" in result.agent_trace
@@ -86,6 +90,64 @@ def test_provider_error_is_sanitized(document_pair):
             analyze_parsed(before, after, "semantic", OpenAISemanticAnalyzer(client, "test-model"))
     assert "sensitive-provider-body" not in str(exc.value)
     assert "test-placeholder" not in str(exc.value)
+    assert exc.value.code == "semantic_authentication_failed"
+    assert "sensitive-provider-body" not in "".join(traceback.format_exception(exc.value))
+
+
+@pytest.mark.parametrize("status, code", [
+    (404, "semantic_model_unavailable"),
+    (429, "semantic_rate_limited"),
+    (500, "semantic_unavailable"),
+])
+def test_provider_failure_codes(document_pair, status, code):
+    def handle(request):
+        return httpx.Response(status, json={"error": {"message": "sensitive-provider-body"}})
+    before, after = [parse_document(raw, name) for raw, name in zip(document_pair, ["before.docx", "after.docx"])]
+    with OpenAI(api_key="test-placeholder", max_retries=0, http_client=httpx.Client(transport=httpx.MockTransport(handle))) as client:
+        with pytest.raises(SemanticError) as exc:
+            analyze_parsed(before, after, "semantic", OpenAISemanticAnalyzer(client, "test-model"))
+    assert exc.value.code == code
+    assert exc.value.status_code == 503
+    assert "sensitive-provider-body" not in "".join(traceback.format_exception(exc.value))
+
+
+@pytest.mark.parametrize("model_text", ["{not-json", "{}", json.dumps({**proposal().model_dump(), "invented_units": ["Fake department"]})])
+def test_malformed_sdk_output_is_rejected(document_pair, model_text):
+    def handle(request):
+        return httpx.Response(200, json={
+            "id": "resp_test", "object": "response", "created_at": 0, "status": "completed",
+            "model": "test-model", "parallel_tool_calls": False, "tool_choice": "auto", "tools": [],
+            "output": [{"id": "msg_test", "type": "message", "role": "assistant", "status": "completed",
+                        "content": [{"type": "output_text", "text": model_text, "annotations": []}]}],
+        })
+    before, after = [parse_document(raw, name) for raw, name in zip(document_pair, ["before.docx", "after.docx"])]
+    with OpenAI(api_key="test-placeholder", max_retries=0, http_client=httpx.Client(transport=httpx.MockTransport(handle))) as client:
+        with pytest.raises(SemanticError) as exc:
+            analyze_parsed(before, after, "semantic", OpenAISemanticAnalyzer(client, "test-model"))
+    assert exc.value.code == "semantic_invalid_output"
+    assert exc.value.status_code == 502
+    assert model_text not in "".join(traceback.format_exception(exc.value))
+
+
+def test_wrong_side_ids_and_unsupported_conclusion_are_rejected(document_pair):
+    before, after = [parse_document(raw, name) for raw, name in zip(document_pair, ["before.docx", "after.docx"])]
+    baseline = analyze_parsed(before, after)
+    before_unit = next(u for u in baseline.units if u.document == before.name and u.functions)
+    after_unit = next(u for u in baseline.units if u.document == after.name and u.functions)
+    value = proposal(
+        unit_relations=[UnitRelation(before_ids=[after_unit.id], after_ids=[before_unit.id], type="RENAMED", confidence=1, explanation="Unsupported")],
+        function_relations=[FunctionRelation(before_id=after_unit.functions[0].id, after_ids=[before_unit.functions[0].id], status="MOVED", confidence=1, explanation="Unsupported")],
+        findings=[SemanticFinding(type="MOVED", severity="HIGH", title="Unsupported", explanation="Unsupported", confidence=1,
+                                  before_clause_ids=[after.clauses[-1].id], after_clause_ids=[before.clauses[-1].id], recommendation="Review")],
+        conclusion="Unsupported conclusion", conclusion_before_clause_ids=["nonexistent"], conclusion_after_clause_ids=[after.clauses[1].id],
+    )
+    result = analyze_parsed(before, after, "semantic", OpenAISemanticAnalyzer(fake_client(value), "test-model"))
+    assert result.units == baseline.units
+    assert result.transformations == baseline.transformations
+    assert result.function_matches == baseline.function_matches
+    assert result.findings == baseline.findings
+    assert result.summary.analytical_note is None
+    assert any("Rejected 4" in w for w in result.warnings)
 
 
 def test_model_split_preserves_each_edge(document_pair):
