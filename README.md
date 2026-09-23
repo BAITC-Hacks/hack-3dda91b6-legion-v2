@@ -2,7 +2,7 @@
 
 Explainable Organizational Change Agent · HackAlem AI 2026 · спецтрек «Казахтелеком».
 
-Проверки интеграции backend + frontend + живой Astra: [checkpoint 2](docs/CHECKPOINT2.md).
+Текущие проверки интеграции, исправления и живой Astra: [checkpoint 3](docs/CHECKPOINT3.md). Предыдущая интеграция: [checkpoint 2](docs/CHECKPOINT2.md).
 
 ## Совместный запуск
 
