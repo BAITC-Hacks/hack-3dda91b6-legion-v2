@@ -2,6 +2,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from .parser import DocumentError, parse_document
 from .pipeline import analyze_parsed
 from .semantic import SemanticError
@@ -13,8 +15,13 @@ def main():
     parser.add_argument("after", type=Path)
     parser.add_argument("--mode", choices=["deterministic", "semantic"], default="deterministic")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--env-file", type=Path, help="Explicit local environment file; existing environment takes precedence.")
     args = parser.parse_args()
     try:
+        if args.env_file:
+            if not args.env_file.is_file():
+                parser.error("The requested environment file does not exist.")
+            load_dotenv(args.env_file, encoding="utf-8-sig", override=False)
         before, after = parse_document(args.before), parse_document(args.after)
         result = analyze_parsed(before, after, args.mode)
         args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -2,8 +2,9 @@
 
 import json
 import os
+from typing import Literal
 
-from openai import APIError, OpenAI
+from openai import APIError, APITimeoutError, AuthenticationError, NotFoundError, OpenAI, RateLimitError
 from pydantic import ValidationError
 
 from .comparison import detect_findings, function_evidence, match_units
@@ -16,6 +17,15 @@ class SemanticError(RuntimeError):
         super().__init__(message)
         self.status_code = status_code
         self.code = code
+
+
+def validate_configuration(model, *, require_key=True):
+    key = os.getenv("OPENAI_API_KEY", "")
+    if not model or (require_key and not key):
+        raise SemanticError("Semantic analysis requires OPENAI_API_KEY and OPENAI_MODEL environment variables.", code="semantic_not_configured")
+    values = [model, key] if require_key else [model]
+    if any(not value.isascii() or not value.isprintable() or any(c.isspace() for c in value) for value in values):
+        raise SemanticError("Invalid local OpenAI configuration. Check OPENAI_API_KEY and OPENAI_MODEL without sharing their values.", code="semantic_invalid_configuration")
 
 
 class UnitRelation(Schema):
@@ -36,7 +46,7 @@ class FunctionRelation(Schema):
 
 class SemanticFinding(Schema):
     type: FindingType
-    severity: str
+    severity: Literal["INFO", "MEDIUM", "HIGH"]
     title: str
     explanation: str
     confidence: Confidence
@@ -83,8 +93,7 @@ class OpenAISemanticAnalyzer:
         self.model = model or os.getenv("OPENAI_MODEL")
 
     def refine(self, result, before, after):
-        if not self.model or (self.client is None and not os.getenv("OPENAI_API_KEY")):
-            raise SemanticError("Semantic analysis requires OPENAI_API_KEY and OPENAI_MODEL environment variables.", code="semantic_not_configured")
+        validate_configuration(self.model, require_key=self.client is None)
         payload = {
             "before": {"document": before.name, "clauses": [{"id": c.id, "section": c.section, "text": c.text} for c in before.clauses]},
             "after": {"document": after.name, "clauses": [{"id": c.id, "section": c.section, "text": c.text} for c in after.clauses]},
@@ -98,20 +107,34 @@ class OpenAISemanticAnalyzer:
         if len(serialized) > 600_000:
             raise SemanticError("Documents exceed the semantic MVP context limit; split the input documents.", 413, "semantic_input_too_large")
         owned_client = self.client is None
-        client = self.client or OpenAI(timeout=120.0, max_retries=1)
+        client = self.client
         try:
+            if client is None:
+                client = OpenAI(timeout=120.0, max_retries=0)
+            options = {"reasoning": {"effort": "low"}} if self.model.startswith("gpt-6-astra") else {}
             response = client.responses.parse(
                 model=self.model, instructions=INSTRUCTIONS, input=serialized,
                 text_format=SemanticProposal, store=False, max_output_tokens=16000,
+                **options,
             )
             proposal = response.output_parsed
             if response.status != "completed" or not isinstance(proposal, SemanticProposal):
                 raise SemanticError("The model did not return a complete structured comparison. Retry the request.", 502, "semantic_invalid_output")
-        except (APIError, ValidationError, ValueError) as exc:
+        except APITimeoutError:
+            raise SemanticError("OpenAI analysis timed out. Retry the request.", 504, "semantic_timeout") from None
+        except AuthenticationError:
+            raise SemanticError("OpenAI rejected the credentials. Check the backend API key.", code="semantic_authentication_failed") from None
+        except NotFoundError:
+            raise SemanticError("The configured OpenAI model is unavailable to this API project.", code="semantic_model_unavailable") from None
+        except RateLimitError:
+            raise SemanticError("OpenAI quota or rate limit reached. Check project quota and retry later.", code="semantic_rate_limited") from None
+        except (ValidationError, ValueError):
+            raise SemanticError("The model returned invalid structured output. Retry the request.", 502, "semantic_invalid_output") from None
+        except APIError:
             # Never echo provider bodies, API credentials or document text to logs/API.
-            raise SemanticError("OpenAI analysis is unavailable. Check model access, credentials, quota and connectivity.") from exc
+            raise SemanticError("OpenAI analysis is unavailable. Check model access, credentials, quota and connectivity.") from None
         finally:
-            if owned_client:
+            if owned_client and client is not None:
                 client.close()
         return apply_proposal(result, proposal, before, after)
 
