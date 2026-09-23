@@ -10,7 +10,8 @@ from .schemas import Evidence, FunctionItem, OrganizationalUnit
 UNIT_START = re.compile(r"^(?:Департамент|Отдел|Управление|Служба|Блок|Бюро|Центр|Department|Division|Unit)\b", re.I)
 ALIAS = re.compile(r"\((?:далее\s*[-–—]?\s*)?([А-ЯЁA-Z][А-ЯЁA-Z0-9-]{1,14})\)")
 STRUCTURE = re.compile(r"состоит из|включает следующие.*подразделени|структур[ауы].*подразделени|consists of", re.I)
-ACTION = re.compile(r"обеспеч|осуществ|провод|проведен|разраб|организ|контрол|провер|оценк|анализ|мониторинг|согласов|утвержд|подготавли|подготовк|взаимодейств|формир|участи|аудит|рассматр|запраш|manage|review|audit|monitor|approve|report", re.I)
+ACTION = re.compile(r"обеспеч|осуществ|провод|проведен|разраб|организ|контрол|провер|оценк|анализ|мониторинг|согласов|утвержд|исполня(?:ет|ют|ть)\b|^исполнение\b|подготавли|подготовк|взаимодейств|формир|участи|аудит|рассматр|запраш|manage|review|audit|monitor|approve|report", re.I)
+PROHIBITION = re.compile(r"\b(?:не\s+име(?:ет|ют)\s+права|не\s+вправе|запрещ\w*)\b", re.I)
 
 
 def stable_id(*parts: str) -> str:
@@ -137,7 +138,7 @@ def extract_functions(doc: ParsedDocument, units: list[OrganizationalUnit]) -> l
                 explicit = False
             if not owners and inherited:
                 owners, _, _, explicit = inherited
-            kind = "PROHIBITION" if re.search(r"не имеют права|запрещ|не вправе", body, re.I) else "RIGHT" if "имеют право" in body or "имеет право" in body else inherited[2] if inherited else "FUNCTION"
+            kind = "PROHIBITION" if PROHIBITION.search(body) else "RIGHT" if "имеют право" in body or "имеет право" in body else inherited[2] if inherited else "FUNCTION"
             contexts[clause.section] = (owners or roots, clause, kind, explicit)
             continue
         if clause.section in structural_parents:
@@ -149,6 +150,10 @@ def extract_functions(doc: ParsedDocument, units: list[OrganizationalUnit]) -> l
         if context is None or not ACTION.search(body) or UNIT_START.match(body):
             continue
         owners, owner_clause, kind, explicit = context
+        # A prohibition can be written in the clause itself, not just its heading.
+        # This classification is local and does not affect following siblings.
+        if PROHIBITION.match(body):
+            kind = "PROHIBITION"
         if STRUCTURE.search(owner_clause.text) or re.search(r"подчиняются|составе следующих должностей", owner_clause.text, re.I):
             continue
         if len(body) < 12:
