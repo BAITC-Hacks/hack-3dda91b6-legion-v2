@@ -954,6 +954,20 @@ a {
   font-size: 9px;
   color: #9aa28f;
 }
+.analysis-metadata { padding: 16px 20px; margin-bottom: 22px; }
+.backend-mode { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: #527344; font-size: 11px; }
+.backend-mode strong { font-weight: 500; }
+.backend-mode > span, .backend-coverage { color: #74826a; font-size: 10px; line-height: 1.8; }
+.backend-coverage { margin: 7px 0 0; }
+.metadata-details { margin-top: 12px; font-size: 11px; line-height: 1.8; color: #647653; overflow-wrap: anywhere; }
+.metadata-details > summary { cursor: pointer; font-weight: 500; }
+.metadata-details > summary svg { vertical-align: middle; margin-right: 4px; }
+.metadata-details p { margin: 9px 0; font-size: 10px; color: #7b8773; }
+.completed-actions { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,230px),1fr)); gap: 6px 18px; padding: 0; list-style: none; }
+.completed-actions li { display: flex; align-items: center; gap: 7px; font-size: 10px; }
+.backend-warnings { color: #8d713b; }
+.backend-warnings ul { padding-left: 18px; font-size: 10px; }
+.backend-warnings li { margin: 6px 0; }
 .analysis-context > div {
   display: flex;
   align-items: center;

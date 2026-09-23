@@ -43,6 +43,7 @@ import TransformationGraph from "./components/TransformationGraph";
 import { EvidenceDrawer } from "./components/EvidenceDrawer";
 import type { EvidenceDetail } from "./components/EvidenceDrawer";
 import { Conclusion } from "./components/Conclusion";
+import { AnalysisMetadata } from "./components/AnalysisMetadata";
 
 type View = "documents" | "overview" | "functions" | "findings" | "conclusion";
 type FileSlot = { name: string; file: File | null };
@@ -355,7 +356,7 @@ function FunctionTable({
           Показано {rows.length} из {analysis.function_matches.length} функций
         </span>
         <span>
-          <ShieldCheck size={13} /> Источник доступен для каждой строки
+          <ShieldCheck size={13} /> Откройте строку, чтобы проверить источники
         </span>
       </div>
     </section>
@@ -513,6 +514,7 @@ function Workspace() {
   const [generated, setGenerated] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const controller = useRef<AbortController | null>(null);
+  const requestInFlight = useRef(false);
   const closeDetail = useCallback(() => setDetail(null), []);
   useEffect(() => () => controller.current?.abort(), []);
   const navigate = (next: View) => {
@@ -522,6 +524,7 @@ function Workspace() {
   const reset = () => {
     controller.current?.abort();
     controller.current = null;
+    requestInFlight.current = false;
     setBefore(null);
     setAfter(null);
     setDemo(false);
@@ -536,12 +539,14 @@ function Workspace() {
     setShowHelp(false);
   };
   const loadDemo = () => {
+    if (requestInFlight.current) return;
     setBefore({ name: "revision_8.docx", file: null });
     setAfter({ name: "revision_9.docx", file: null });
     setDemo(true);
     setError(null);
   };
   const selectFile = (side: "before" | "after", file: File) => {
+    if (requestInFlight.current) return;
     if (
       !/\.docx$/i.test(file.name) ||
       file.size === 0 ||
@@ -562,7 +567,9 @@ function Workspace() {
     (side === "before" ? setBefore : setAfter)({ name: file.name, file });
   };
   const analyze = async () => {
-    controller.current?.abort();
+    // A ref closes the gap before React renders the disabled/loading state.
+    if (requestInFlight.current || !before || !after || (!demo && USE_MOCK)) return;
+    requestInFlight.current = true;
     const active = new AbortController();
     controller.current = active;
     setLoading(true);
@@ -599,7 +606,10 @@ function Workspace() {
             : "Не удалось подключиться к сервису. Повторите попытку или запустите демосценарий.",
       });
     } finally {
-      if (controller.current === active) setLoading(false);
+      if (controller.current === active) {
+        requestInFlight.current = false;
+        setLoading(false);
+      }
     }
   };
   const showFinding = (finding: Finding) => setDetail(finding);
@@ -613,6 +623,9 @@ function Workspace() {
         "Сверьте границы ответственности и актуальность указанных пунктов в обеих редакциях документа.",
     });
   const canAnalyze = Boolean(before && after && (demo || !USE_MOCK));
+  const displayedDemo = analysis && view !== "documents" && !loading
+    ? analysisDemo
+    : demo || USE_MOCK;
   const referenced =
     analysis?.findings.filter(
       (f) => f.before_evidence.length + f.after_evidence.length > 0,
@@ -707,10 +720,11 @@ function Workspace() {
           </div>
           <div className="topbar-right">
             <span
-              className={`mode-chip ${USE_MOCK || demo || analysisDemo ? "" : "api-chip"}`}
+              className={`mode-chip ${displayedDemo ? "" : "api-chip"}`}
+              title={displayedDemo ? "Подготовленные синтетические данные" : "Анализ документов через настоящий API"}
             >
               <span />
-              {USE_MOCK || demo || analysisDemo ? "Демо-режим" : "Live API"}
+              {displayedDemo ? "DEMO DATA" : "LIVE ANALYSIS"}
             </span>
             <span className="profile-avatar" title="Аналитик">
               А
@@ -793,7 +807,7 @@ function Workspace() {
                 <p>
                   {demo
                     ? "Показываем этапы на подготовленном наборе данных. Это имитация обработки для демонстрации."
-                    : "Документы отправляются в API. Промежуточный ход обработки неизвестен."}
+                    : "Запрос отправлен в сервис анализа. Выполненные этапы будут показаны после ответа; промежуточный ход обработки неизвестен."}
                 </p>
                 <div className="activity-docs">
                   <FileText size={15} />
@@ -842,11 +856,11 @@ function Workspace() {
                     <LoaderCircle className="spin" size={28} />
                     <p>Анализ документов на сервере…</p>
                     <small>
-                      Вы можете отменить запрос кнопкой «Сбросить демо».
+                      Анализ может занять несколько минут. Кнопка «Сбросить демо» отменяет ожидание ответа.
                     </small>
                   </div>
                 )}
-                <div className="activity-progress">
+                {demo && <div className="activity-progress">
                   <span
                     style={{
                       width: demo
@@ -854,7 +868,7 @@ function Workspace() {
                         : "25%",
                     }}
                   />
-                </div>
+                </div>}
                 <small className="trace-note">
                   {demo
                     ? "Журнал действий · симуляция в demo mode"
@@ -1014,6 +1028,7 @@ function Workspace() {
                 </div>
                 {view === "overview" && (
                   <>
+                    {!analysisDemo && <AnalysisMetadata analysis={analysis} />}
                     <div className="summary-grid">
                       {[
                         {

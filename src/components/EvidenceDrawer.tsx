@@ -80,7 +80,7 @@ export function EvidenceDrawer({
           </div>
         ))
       ) : (
-        <div className="source-empty">
+        <div className="source-empty" role="note">
           <TriangleAlert size={17} /> Подтверждающий фрагмент не найден.
           Отсутствие источника само по себе не доказывает потерю функции.
         </div>
@@ -141,7 +141,7 @@ export function EvidenceDrawer({
           {source(detail.before_evidence, "BEFORE SOURCE · ДО ИЗМЕНЕНИЙ")}
           {source(detail.after_evidence, "AFTER SOURCE · ПОСЛЕ ИЗМЕНЕНИЙ")}
           <section className="drawer-section">
-            <h3>Что изменилось</h3>
+            <h3>Интерпретация изменения</h3>
             <p>{detail.explanation}</p>
           </section>
           <section className="drawer-section">
@@ -153,7 +153,7 @@ export function EvidenceDrawer({
               <span style={{ width: `${detail.confidence * 100}%` }} />
             </div>
             <small>
-              Оценка модели, не вероятность достоверности вывода.
+              Оценка сопоставления, не вероятность достоверности вывода.
               {demo ? " В демо задана вручную." : ""}
             </small>
           </section>
