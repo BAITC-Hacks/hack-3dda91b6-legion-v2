@@ -43,6 +43,8 @@ export function Conclusion({
   const name = (id: string | null) =>
     analysis.units.find((u) => u.id === id)?.name ?? "—";
   const executive = summary.conclusion ?? `Структура изменилась: ${summary.units_before} → ${summary.units_after} подразделения. Новых подразделений: ${summary.created_units}, упразднённых: ${summary.removed_units}. Передано функций: ${summary.moved_functions}. К проверке: возможная потеря функций — ${summary.lost_functions}, дублирование — ${summary.duplications}, потенциальные конфликты — ${summary.potential_conflicts}.`;
+  const noteSources = summary.note_evidence ?? [];
+  const noteVerified = summary.note_verification_status === "VERIFIED";
   const download = () => {
     const lines = [
       "# OrgLens AI — Аналитическое заключение",
@@ -52,11 +54,20 @@ export function Conclusion({
       "",
       demo
         ? "**ДЕМО: синтетические документы и цитаты. Не является анализом реальной организации.**"
-        : "Заключение составлено из структурированного ответа API.",
+        : `LIVE ANALYSIS: заключение составлено из ответа API. Режим: ${analysis.analysis_mode ?? "не указан сервисом"}.`,
       "",
       "## Executive summary",
       executive,
       "",
+      ...(summary.analytical_note ? [
+        "## Аналитическая оценка сервиса",
+        `Статус: ${summary.note_verification_status ?? "NEEDS_REVIEW"}. Оценка носит рекомендательный характер.`,
+        summary.analytical_note,
+        "",
+        "### Исходные фрагменты для оценки",
+        ...(noteSources.length ? noteSources.map(e => `- ${e.document}, ${e.section === null ? "без номера пункта" : `п. ${e.section}`}: «${e.text}»`) : ["Подтверждающие источники не переданы. Оценка требует проверки."]),
+        "",
+      ] : []),
       "## Основные изменения",
       ...analysis.transformations.map(
         (t) =>
@@ -73,6 +84,7 @@ export function Conclusion({
       `${referenced}/${findings.length} выводов имеют хотя бы один исходный фрагмент. Подтверждено: ${verified}/${findings.length}. Наличие цитаты не равно подтверждению вывода.`,
       "",
       "## Ограничения",
+      ...(analysis.warnings ?? []).map(warning => `- ${warning}`),
       "Потенциальный конфликт не доказывает нарушение. Отсутствие сопоставления не доказывает потерю функции. Confidence — оценка сопоставления, не калиброванная вероятность. Заключение собрано по шаблону из результата анализа; требуется экспертная проверка.",
     ];
     const url = URL.createObjectURL(
@@ -130,6 +142,19 @@ export function Conclusion({
         <h3>Краткое резюме</h3>
         <p>{executive}</p>
       </div>
+      {summary.analytical_note && <section className="report-section analytical-note">
+        <h3>Аналитическая оценка сервиса</h3>
+        <span className={`status-pill ${noteVerified ? "verified" : "review"}`}>{noteVerified ? <ShieldCheck size={14} /> : <TriangleAlert size={14} />}{noteVerified ? "Подтверждено · VERIFIED" : "Требует проверки · NEEDS REVIEW"}</span>
+        <p>{summary.analytical_note}</p>
+        <p>Оценка носит рекомендательный характер и требует экспертного решения.</p>
+        <details className="metadata-details">
+          <summary>Исходные фрагменты для оценки · {noteSources.length}</summary>
+          {noteSources.length ? noteSources.map((source, index) => <div className="source-card" key={`${source.clause_id}-${index}`}>
+            <div className="source-meta"><FileText size={15} /><strong>{source.document}</strong><span>{source.section === null ? "Без номера пункта" : `п. ${source.section}`}</span></div>
+            <blockquote>«{source.text}»</blockquote>
+          </div>) : <p>Подтверждающие источники не переданы. Оценка требует проверки.</p>}
+        </details>
+      </section>}
       <div className="report-section">
         <h3>Основные преобразования</h3>
         {analysis.transformations.length ? (
@@ -229,6 +254,7 @@ export function Conclusion({
           </p>
         </div>
       </div>
+      {Boolean(analysis.warnings?.length) && <section className="report-section backend-warnings"><h3>Ограничения анализа</h3><ul>{analysis.warnings!.map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}</ul></section>}
       <p className="report-disclaimer">
         {demo && "Учебный сценарий на синтетических данных. "}Заключение собрано
         по шаблону из результатов анализа. Потенциальные риски требуют оценки

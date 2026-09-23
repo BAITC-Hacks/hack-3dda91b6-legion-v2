@@ -13,6 +13,8 @@ function coreResponse() {
   return {
     analysis_id: 'core-synthetic', analysis_mode: 'deterministic',
     before_document: 'before.docx', after_document: 'after.docx',
+    agent_trace: ['Parsing BEFORE document', 'Verifying documentary evidence'],
+    warnings: ['Synthetic fixture; no real documents were analyzed.'], clauses_before: 2, clauses_after: 3,
     units: [
       { id: 'bu', name: 'Контроль', document: 'before.docx', functions: [{ id: 'bf', document: 'before.docx', normalized_function: 'проверяет отчёт', clause_id: 'bc' }] },
       { id: 'au', name: 'Контроль', document: 'after.docx', functions: [
@@ -28,7 +30,9 @@ function coreResponse() {
       explanation: 'Проверить распределение ответственности.', recommendation: 'Уточнить полномочия.',
       confidence: 0.8, verification_status: 'NEEDS_REVIEW', before_evidence: [], after_evidence: [a, a2] }],
     summary: { units_before: 1, units_after: 1, created_units: 0, removed_units: 0,
-      moved_functions: 0, lost_functions: 0, duplications: 1, potential_conflicts: 0, conclusion: 'Требуется проверка.' },
+      moved_functions: 0, lost_functions: 0, duplications: 1, overlaps: 0, potential_conflicts: 0,
+      verified_findings: 0, needs_review_findings: 1, conclusion: 'Требуется проверка.',
+      analytical_note: null as string | null, note_evidence: [] as ReturnType<typeof source>[], note_verification_status: 'NEEDS_REVIEW' },
   }
 }
 
@@ -44,6 +48,11 @@ describe('CORE to existing UI adapter', () => {
     expect(result.findings[0].after_evidence).toEqual(raw.findings[0].after_evidence)
     expect(result.findings[0].verification_status).toBe('NEEDS_REVIEW')
     expect(result.summary).toEqual(raw.summary)
+    expect(result.analysis_mode).toBe(raw.analysis_mode)
+    expect(result.agent_trace).toEqual(raw.agent_trace)
+    expect(result.warnings).toEqual(raw.warnings)
+    expect(result.clauses_before).toBe(2)
+    expect(result.clauses_after).toBe(3)
     expect(raw.units[0]).not.toHaveProperty('revision')
   })
 
@@ -51,15 +60,89 @@ describe('CORE to existing UI adapter', () => {
     const raw = coreResponse()
     raw.findings[0].type = 'OVERLAP'
     raw.summary.duplications = 0
+    raw.summary.overlaps = 1
     expect(validateAnalysisResponse(raw).findings[0]).toMatchObject({ type: 'OVERLAP', before_evidence: [] })
   })
 
   it('counts a moved before function once across multiple semantic edges', () => {
     const raw = coreResponse()
     raw.function_matches[0].status = 'MOVED'
+    raw.function_matches[0].verification_status = 'NEEDS_REVIEW'
     raw.function_matches.push({ ...raw.function_matches[0], after_function: 'af2' })
     raw.summary.moved_functions = 1
     expect(validateAnalysisResponse(raw).summary.moved_functions).toBe(1)
+  })
+
+  it('preserves a semantic analytical note with its exact evidence and review status', () => {
+    const raw = coreResponse()
+    raw.analysis_mode = 'semantic'
+    raw.summary.analytical_note = 'Сопоставление требует экспертной проверки.'
+    raw.summary.note_evidence = [...raw.function_matches[0].before_evidence, ...raw.function_matches[0].after_evidence]
+    const result = validateAnalysisResponse(raw)
+    expect(result.summary.analytical_note).toBe(raw.summary.analytical_note)
+    expect(result.summary.note_evidence).toEqual(raw.summary.note_evidence)
+    expect(result.summary.note_verification_status).toBe('NEEDS_REVIEW')
+  })
+
+  it('keeps a review candidate after CORE removed all unsupported sources', () => {
+    const raw = coreResponse()
+    raw.findings[0].after_evidence = []
+    const result = validateAnalysisResponse(raw)
+    expect(result.findings[0]).toMatchObject({ verification_status: 'NEEDS_REVIEW', before_evidence: [], after_evidence: [], function_ids: [] })
+    expect(result.warnings).toContainEqual(expect.stringContaining('Неполное покрытие источниками'))
+    expect(raw.warnings).toHaveLength(1)
+  })
+
+  it('keeps an explicitly unverified mapping with incomplete sources', () => {
+    const raw = coreResponse()
+    raw.transformations[0].verification_status = 'NEEDS_REVIEW'
+    raw.transformations[0].evidence = []
+    raw.function_matches[0].verification_status = 'NEEDS_REVIEW'
+    raw.function_matches[0].after_evidence = []
+    const result = validateAnalysisResponse(raw)
+    expect(result.transformations[0].after_evidence).toEqual([])
+    expect(result.function_matches[0].verification_status).toBe('NEEDS_REVIEW')
+    expect(result.warnings).toContainEqual(expect.stringContaining('Неполное покрытие'))
+  })
+
+  it('warns when an analytical note has incomplete source coverage without inventing evidence', () => {
+    const raw = coreResponse()
+    raw.summary.analytical_note = 'Требуется проверка.'
+    raw.summary.note_evidence = raw.function_matches[0].after_evidence
+    const result = validateAnalysisResponse(raw)
+    expect(result.summary.note_evidence).toHaveLength(1)
+    expect(result.summary.note_verification_status).toBe('NEEDS_REVIEW')
+    expect(result.warnings).toContainEqual(expect.stringContaining('не содержит источников обеих редакций'))
+  })
+
+  it.each([
+    ['verified observation without sources', (raw: ReturnType<typeof coreResponse>) => { raw.function_matches[0].before_evidence = [] }],
+    ['verified observation with unrelated clause', (raw: ReturnType<typeof coreResponse>) => { raw.function_matches[0].before_evidence[0].clause_id = 'unrelated' }],
+    ['verified semantic transfer', (raw: ReturnType<typeof coreResponse>) => { raw.function_matches[0].status = 'MOVED'; raw.summary.moved_functions = 1 }],
+    ['verified finding', (raw: ReturnType<typeof coreResponse>) => { raw.findings[0].verification_status = 'VERIFIED' }],
+    ['verified analytical note', (raw: ReturnType<typeof coreResponse>) => { raw.summary.note_verification_status = 'VERIFIED' }],
+    ['wrong overlap total', (raw: ReturnType<typeof coreResponse>) => { raw.summary.overlaps = 2 }],
+    ['wrong review total', (raw: ReturnType<typeof coreResponse>) => { raw.summary.needs_review_findings = 0 }],
+    ['ambiguous document names', (raw: ReturnType<typeof coreResponse>) => { raw.after_document = raw.before_document }],
+  ])('rejects CORE %s', (_name, change) => {
+    const raw = coreResponse()
+    change(raw)
+    expect(() => validateAnalysisResponse(raw)).toThrow(AnalysisError)
+  })
+
+  it('rejects missing evidence arrays and missing required CORE metadata', () => {
+    const raw = coreResponse()
+    const { agent_trace: _trace, ...withoutTrace } = raw
+    expect(() => validateAnalysisResponse(withoutTrace)).toThrow(AnalysisError)
+    expect(() => validateAnalysisResponse({ ...raw, findings: [{ ...raw.findings[0], after_evidence: undefined }] })).toThrow(AnalysisError)
+    expect(() => validateAnalysisResponse({ ...raw, warnings: [9] })).toThrow(AnalysisError)
+  })
+
+  it('allows null section only on unverified CORE observations', () => {
+    const raw = coreResponse()
+    const unnumbered = { ...raw.function_matches[0], before_evidence: [{ ...raw.function_matches[0].before_evidence[0], section: null }] }
+    expect(() => validateAnalysisResponse({ ...raw, function_matches: [unnumbered] })).toThrow(AnalysisError)
+    expect(validateAnalysisResponse({ ...raw, function_matches: [{ ...unnumbered, verification_status: 'NEEDS_REVIEW' }] }).function_matches[0].before_evidence[0].section).toBeNull()
   })
 
   it.each(['reference', 'document', 'count', 'duplicate'])( 'rejects invalid CORE %s', kind => {
@@ -73,6 +156,42 @@ describe('CORE to existing UI adapter', () => {
 })
 
 describe('analysis response validation', () => {
+  it('preserves optional legacy metadata and note sources without requiring CORE metadata', () => {
+    const data = freshDemo()
+    const result = validateAnalysisResponse({
+      ...data, warnings: ['Учебные данные'], agent_trace: ['Сопоставление завершено'], clauses_before: 12, clauses_after: 13,
+      summary: { ...data.summary, analytical_note: 'Проверить распределение ответственности.', note_evidence: data.findings[0].before_evidence, note_verification_status: 'NEEDS_REVIEW' },
+    })
+    expect(result.warnings).toEqual(['Учебные данные'])
+    expect(result.agent_trace).toEqual(['Сопоставление завершено'])
+    expect(result.analysis_mode).toBeUndefined()
+    expect(result.summary.note_evidence).toEqual(data.findings[0].before_evidence)
+    expect(validateAnalysisResponse({ ...data, summary: { ...data.summary, analytical_note: null, note_evidence: [] } }).summary.analytical_note).toBeNull()
+  })
+
+  it.each([
+    ['warnings as text', { warnings: 'not an array' }],
+    ['warnings containing an object', { warnings: [{ message: 'bad shape' }] }],
+    ['trace as an object', { agent_trace: { stage: 'complete' } }],
+    ['trace containing an object', { agent_trace: [{ stage: 'complete' }] }],
+    ['invalid clause count', { clauses_before: '12' }],
+  ])('rejects malformed optional legacy %s', (_name, metadata) => {
+    expect(() => validateAnalysisResponse({ ...freshDemo(), ...metadata })).toThrow(AnalysisError)
+  })
+
+  it.each([
+    ['note object', { analytical_note: { text: 'not a string' } }],
+    ['note sources as object', { note_evidence: { document: 'revision_8.docx' } }],
+    ['malformed note citation', { note_evidence: [{ document: 'revision_8.docx', section: '2.1', text: { quote: 'invalid' } }] }],
+    ['unrelated note citation', { note_evidence: [{ document: 'unrelated.docx', section: '2.1', text: 'Unknown source' }] }],
+    ['unknown note status', { note_verification_status: 'CONFIRMED' }],
+    ['verified note without sources', { analytical_note: 'Неподтверждённый текст.', note_verification_status: 'VERIFIED', note_evidence: [] }],
+    ['invalid optional findings count', { verified_findings: -1 }],
+  ])('rejects malformed optional legacy %s', (_name, metadata) => {
+    const data = freshDemo()
+    expect(() => validateAnalysisResponse({ ...data, summary: { ...data.summary, ...metadata } })).toThrow(AnalysisError)
+  })
+
   it('accepts the internally consistent documentary demo', () => {
     const result = validateAnalysisResponse(freshDemo())
     expect(result.summary).toEqual({
@@ -272,11 +391,31 @@ describe('analysis adapter', () => {
     ['network failure', () => Promise.reject(new TypeError('Failed to fetch')), 'unavailable'],
     ['invalid JSON', () => Promise.resolve(new Response('<html>error</html>', { status: 200 })), 'malformed'],
     ['incomplete JSON', () => Promise.resolve(new Response(JSON.stringify({ summary: {} }), { status: 200 })), 'malformed'],
+    ['invalid DOCX', () => Promise.resolve(new Response(JSON.stringify({ error: { code: 'invalid_document', message: 'untrusted provider detail' } }), { status: 422 })), 'validation'],
+    ['oversized input', () => Promise.resolve(new Response(JSON.stringify({ error: { code: 'semantic_input_too_large' } }), { status: 413 })), 'validation'],
+    ['incomplete semantic result', () => Promise.resolve(new Response(JSON.stringify({ error: { code: 'semantic_invalid_output' } }), { status: 502 })), 'malformed'],
   ])('classifies %s for the error screen', async (_name, response, kind) => {
     vi.stubEnv('VITE_USE_MOCK', 'false')
     const { analyzeDocuments } = await import('./analysis')
     vi.stubGlobal('fetch', vi.fn(response))
     await expect(analyzeDocuments({ beforeFile: new File(['b'], 'before.docx'), afterFile: new File(['a'], 'after.docx'), demo: false })).rejects.toMatchObject({ kind })
+  })
+
+  it('never exposes an untrusted server error body or switches to mock on failure', async () => {
+    vi.stubEnv('VITE_USE_MOCK', 'false')
+    const { analyzeDocuments } = await import('./analysis')
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: 'semantic_unavailable', message: 'sensitive-provider-body' } }), { status: 503 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const progress = vi.fn()
+    try {
+      await analyzeDocuments({ beforeFile: new File(['b'], 'before.docx'), afterFile: new File(['a'], 'after.docx'), demo: false, onProgress: progress })
+      throw new Error('Expected failure')
+    } catch (error) {
+      expect(error).toMatchObject({ kind: 'unavailable' })
+      expect((error as Error).message).not.toContain('sensitive-provider-body')
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(progress.mock.calls).toEqual([[0]])
   })
 
   it('aborts a pending real request when the user resets', async () => {
@@ -294,16 +433,18 @@ describe('analysis adapter', () => {
     expect(fetchMock.mock.calls[0][1].signal?.aborted).toBe(true)
   })
 
-  it('ends a stalled real request after 45 seconds', async () => {
+  it('allows CORE semantic processing time and aborts after the configured limit', async () => {
     vi.useFakeTimers()
     vi.stubEnv('VITE_USE_MOCK', 'false')
-    const { analyzeDocuments } = await import('./analysis')
+    const { analyzeDocuments, API_TIMEOUT_MS } = await import('./analysis')
     vi.stubGlobal('fetch', vi.fn((_url, options: RequestInit) => new Promise((_resolve, reject) => {
       options.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
     })))
     const promise = analyzeDocuments({ beforeFile: new File(['b'], 'before.docx'), afterFile: new File(['a'], 'after.docx'), demo: false })
-    const rejection = expect(promise).rejects.toMatchObject({ kind: 'unavailable', message: expect.stringContaining('45') })
-    await vi.advanceTimersByTimeAsync(45_000)
+    const rejection = expect(promise).rejects.toMatchObject({ kind: 'unavailable', message: expect.stringContaining(String(API_TIMEOUT_MS / 1000)) })
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(vi.getTimerCount()).toBe(1)
+    await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS - 120_000)
     await rejection
     expect(vi.getTimerCount()).toBe(0)
   })
