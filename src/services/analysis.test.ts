@@ -401,6 +401,26 @@ describe('analysis adapter', () => {
     await expect(analyzeDocuments({ beforeFile: new File(['b'], 'before.docx'), afterFile: new File(['a'], 'after.docx'), demo: false })).rejects.toMatchObject({ kind })
   })
 
+  it.each([
+    ['semantic_authentication_failed', 503, 'Сервис ИИ не прошёл авторизацию. Администратору нужно проверить ключ API на сервере. Можно открыть учебный пример.'],
+    ['semantic_model_unavailable', 503, 'Выбранная модель ИИ недоступна серверу. Администратору нужно проверить модель и права доступа. Можно открыть учебный пример.'],
+    ['semantic_rate_limited', 503, 'Достигнут лимит запросов или исчерпана квота сервиса ИИ. Повторите позже или откройте учебный пример.'],
+    ['semantic_timeout', 504, 'Сервис ИИ не ответил за 120 секунд. Повторите анализ или откройте учебный пример.'],
+  ] as const)('explains %s safely without retrying or switching to demo', async (code, status, message) => {
+    vi.stubEnv('VITE_USE_MOCK', 'false')
+    const { analyzeDocuments } = await import('./analysis')
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: { code, message: 'UNTRUSTED_PROVIDER_DETAIL', provider: { body: 'PRIVATE_PROVIDER_BODY' } },
+    }), { status }))
+    vi.stubGlobal('fetch', fetchMock)
+    const progress = vi.fn()
+    await expect(analyzeDocuments({
+      beforeFile: new File(['b'], 'before.docx'), afterFile: new File(['a'], 'after.docx'), demo: false, onProgress: progress,
+    })).rejects.toMatchObject({ kind: 'unavailable', message })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(progress.mock.calls).toEqual([[0]])
+  })
+
   it('never exposes an untrusted server error body or switches to mock on failure', async () => {
     vi.stubEnv('VITE_USE_MOCK', 'false')
     const { analyzeDocuments } = await import('./analysis')
