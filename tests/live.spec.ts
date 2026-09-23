@@ -1,0 +1,62 @@
+import { existsSync, readdirSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { expect, test } from '@playwright/test'
+
+test('real DOCX → CORE → production frontend → evidence → downloaded conclusion', async ({ page, request }, testInfo) => {
+  test.setTimeout(90_000)
+  const files = existsSync('data') ? readdirSync('data') : []
+  const before = files.find(name => /_8_.*\.docx$/i.test(name))
+  const after = files.find(name => /_9_.*\.docx$/i.test(name))
+  test.skip(!before || !after, 'Private control DOCX files are intentionally not committed.')
+  const health = await request.get('/api/health')
+  expect(health.status()).toBe(200)
+  expect(await health.json()).toEqual({ ok: true })
+  const browserErrors: string[] = []
+  page.on('pageerror', error => browserErrors.push(error.message))
+  await page.goto('/')
+  await expect(page.getByText('Live API', { exact: true })).toBeVisible()
+  await page.getByLabel('Документ до реорганизации', { exact: true }).setInputFiles(join('data', before!))
+  await page.getByLabel('Документ после реорганизации', { exact: true }).setInputFiles(join('data', after!))
+  const responsePending = page.waitForResponse(response => response.url().endsWith('/api/analyze') && response.request().method() === 'POST')
+  await page.getByRole('button', { name: 'Анализировать изменения', exact: true }).click()
+  const response = await responsePending
+  expect(response.status()).toBe(200)
+  const result = await response.json()
+  expect(result.analysis_mode).toBe('deterministic')
+  expect(result.clauses_before).toBeGreaterThan(0)
+  expect(result.clauses_after).toBeGreaterThan(0)
+  await expect(page.getByRole('heading', { name: 'Обзор изменений', exact: true })).toBeVisible()
+  await expect(page.locator('.graph-unit--before')).toHaveCount(result.summary.units_before)
+  await expect(page.locator('.graph-unit--after')).toHaveCount(result.summary.units_after)
+  await expect(page.locator('.analysis-context')).toContainText(result.analysis_id)
+  await page.getByRole('button', { name: 'Сравнение функций', exact: true }).click()
+  await expect(page.locator('tbody tr')).toHaveCount(result.function_matches.length)
+  await page.locator('tbody tr button').first().click()
+  const drawer = page.getByRole('dialog')
+  await expect(drawer).toBeVisible()
+  const firstEvidence = result.function_matches[0].before_evidence[0]
+  await expect(drawer.locator('.source-block').first().locator('blockquote').first()).toHaveText(`«${firstEvidence.text}»`)
+  await page.getByRole('button', { name: 'Закрыть источники', exact: true }).click()
+  await page.getByRole('button', { name: /^Риски и выводы/ }).click()
+  const reviewFinding = result.findings.find((finding: { verification_status: string }) => finding.verification_status === 'NEEDS_REVIEW')
+  expect(reviewFinding).toBeDefined()
+  await page.getByText(reviewFinding.title, { exact: true }).first().click()
+  await expect(drawer.getByText('Требует проверки · NEEDS REVIEW', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Закрыть источники', exact: true }).click()
+  await page.getByRole('button', { name: 'Заключение', exact: true }).click()
+  await page.getByRole('button', { name: 'Сформировать заключение', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Аналитическое заключение', exact: true, level: 2 })).toBeVisible()
+  await expect(page.locator('.executive-summary')).toContainText(result.summary.conclusion)
+  const downloadPending = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Скачать заключение', exact: true }).click()
+  const download = await downloadPending
+  const report = await readFile((await download.path())!, 'utf8')
+  expect(report).toContain(result.analysis_id)
+  expect(report).toContain(result.before_document)
+  expect(report).toContain(result.after_document)
+  expect(report).toContain('NEEDS_REVIEW')
+  expect(report).not.toContain('ДЕМО: синтетические документы')
+  expect(browserErrors).toEqual([])
+  await page.screenshot({ path: testInfo.outputPath('integrated-live-result.png') })
+})
