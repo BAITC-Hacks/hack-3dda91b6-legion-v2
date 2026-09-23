@@ -1277,6 +1277,7 @@ a {
   color: #a4ae95;
 }
 .table-scroll {
+  position: relative;
   overflow-x: auto;
 }
 table {
@@ -1406,6 +1407,7 @@ tbody tr:hover {
   backdrop-filter: blur(3px);
   display: flex;
   justify-content: flex-end;
+  overflow: hidden;
 }
 .evidence-drawer {
   background: #fff;
