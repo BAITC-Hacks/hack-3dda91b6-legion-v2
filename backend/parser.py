@@ -9,6 +9,7 @@ from zipfile import BadZipFile, ZipFile
 
 from docx import Document
 from docx.oxml.ns import qn
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.text.paragraph import Paragraph
 from lxml.etree import XMLSyntaxError, XPath
 
@@ -58,7 +59,7 @@ class WordNumbering:
 
     def __init__(self, doc):
         try:
-            self.root = doc.part.numbering_part.element
+            self.root = doc.part.part_related_by(RT.NUMBERING).element
         except KeyError:
             self.root = None
         self.counters = {}

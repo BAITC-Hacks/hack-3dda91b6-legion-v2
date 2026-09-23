@@ -4,6 +4,7 @@ from pathlib import Path
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
 import pytest
 
 from backend.parser import DocumentError, parse_document
@@ -67,6 +68,18 @@ def test_word_numbering_and_restart():
 def test_unnumbered_text_does_not_invent_section(make_docx):
     parsed = parse_document(make_docx(["Общие положения без номера."]))
     assert parsed.clauses[0].section is None
+
+
+def test_valid_docx_without_numbering_part():
+    doc = Document()
+    doc.add_paragraph("1.1. Пункт с ручным номером.")
+    for rel_id, rel in list(doc.part.rels.items()):
+        if rel.reltype == RT.NUMBERING:
+            doc.part.drop_rel(rel_id)
+    stream = BytesIO()
+    doc.save(stream)
+    parsed = parse_document(stream.getvalue())
+    assert parsed.clauses[0].section == "1.1"
 
 
 @pytest.mark.parametrize("raw,name", [(b"not a zip", "bad.docx"), (b"", "file.pdf")])
