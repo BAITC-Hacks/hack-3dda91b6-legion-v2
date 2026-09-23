@@ -4,9 +4,9 @@ Explainable Organizational Change Agent · HackAlem AI 2026 · спецтрек 
 
 Текущие проверки интеграции, исправления и живой Astra: [checkpoint 3](docs/CHECKPOINT3.md). Предыдущая интеграция: [checkpoint 2](docs/CHECKPOINT2.md).
 
-## Совместный запуск
+## Совместный запуск без API-ключа и документов организатора
 
-Node.js 22.13+ и Python 3.12+. Команды из корня репозитория. Backend и frontend запускаются в двух терминалах:
+Node.js 22.13+ и Python 3.12+. Команды Windows PowerShell выполняются из корня репозитория. Для первой установки зависимостей нужен интернет; после установки deterministic-анализ работает локально. `.env`, OpenAI-ключ и документы организатора для этого пути не нужны. Освободите порты 8000 и 5173. Backend и frontend запускаются в двух терминалах:
 
 ```powershell
 # Терминал 1
@@ -19,12 +19,32 @@ $env:ANALYSIS_MODE = 'deterministic'
 ```powershell
 # Терминал 2
 npm ci
+$env:VITE_USE_MOCK = 'false'
+$env:VITE_API_BASE_URL = ''
 npm run dev
 ```
 
 Откройте http://127.0.0.1:5173. По умолчанию пользовательские DOCX идут в настоящий backend через Vite proxy; OpenAI-ключ для детерминированного режима не нужен. Метка `LIVE ANALYSIS` означает запрос к backend, а `DEMO DATA` — локальный синтетический набор. Режим анализа `deterministic` / `semantic` показывается по ответу сервера; `LIVE ANALYSIS` сам по себе не означает использование LLM. «Загрузить демодокументы» доступно в обоих режимах. Для проверки сборки остановите dev-сервер и запустите `npm run build`, затем `npm run preview -- --port 5173` при работающем backend.
 
 Backend `/api/health` доступен на порту 8000 напрямую и через frontend `/api/health`. Секреты остаются только в окружении backend. `.env.example` содержит настройки обеих частей; backend загружает `.env` только с явным `--env-file .env`, Vite читает `.env` и `.env.local` (в браузер экспортируются только `VITE_*`).
+
+### Проверка на синтетических DOCX с известными изменениями
+
+Оставьте оба сервера запущенными. В третьем терминале из корня репозитория:
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/api/health).Content
+(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5173/api/health).Content
+.\.venv\Scripts\python.exe -m scripts.smoke_known_answer
+```
+
+Оба health-запроса должны вернуть `{"ok":true}`, а smoke — завершиться с кодом 0 и строками `PASS`. Скрипт **не запускает backend**: по умолчанию обращается к уже работающему `http://127.0.0.1:8000`, создаёт синтетические DOCX и отправляет их настоящим HTTP-запросом с `mode=deterministic`. Ключ и документы организатора не используются; OpenAI не вызывается.
+
+В ignored-каталоге `artifacts/known-answer/` появятся `known-before.docx`, `known-after.docx`, `expected.json` и `deterministic-response.json`. Для проверки UI выберите эти два DOCX на странице 5173 и нажмите «Анализировать изменения». Должны отображаться `LIVE ANALYSIS` и «Детерминированный анализ», затем граф, функции, выводы, источники и Markdown-экспорт. Это настоящий backend на синтетических входных документах, не semantic-запуск Astra и не встроенный `DEMO DATA`.
+
+Smoke проверяет заранее заданные изменения и точность ссылок на источники конкретного синтетического примера. Это проверка воспроизводимости, не измерение точности продукта. Переименование и заключение модели проверяются только отдельным платным `--mode semantic`; для обычного запуска этот параметр не нужен. Адрес и каталог можно изменить через `--base-url` и `--output-dir`.
+
+`GET /api/demo` требует локальные контрольные DOCX и без них возвращает 404. Кнопка frontend «Загрузить демодокументы» использует собственный синтетический набор и работает без этих файлов и без backend.
 
 ## Problem
 
@@ -50,18 +70,21 @@ React + TypeScript + Vite. UI получает общий объект анал�
 
 Контракт результата: `analysis_id`, `before_document`, `after_document`, `units`, `transformations`, `function_matches`, `findings`, `summary`. Перед показом валидатор проверяет поля, ссылки на ID, основания и согласованность счётчиков. Правила адаптации ответа CORE к UI: [API_CONTRACT.md](API_CONTRACT.md); исходные типы — [src/types.ts](src/types.ts).
 
-## Run
+## Frontend и автоматические проверки
 
-В каталоге проекта:
+Для запуска только frontend из корня проекта (API-анализ требует backend из инструкции выше; локальный `DEMO DATA` работает без него):
 
 ```sh
 npm ci
 npm run dev
 ```
 
-Откройте локальный адрес из вывода Vite. Проверка и сборка:
+Откройте локальный адрес из вывода Vite. Для полного набора проверок нужны установленный Google Chrome и Python-зависимости из `requirements-lock.txt`. Перед E2E остановите запущенный вручную backend на 8000 клавишами Ctrl+C: тесты поднимают собственный сервер. Освободите также порты 5175–5177. В отдельном PowerShell:
 
-```sh
+```powershell
+$env:VITE_USE_MOCK = 'false'
+$env:VITE_API_BASE_URL = ''
+$env:LIVE_SEMANTIC_SMOKE = '0'
 npm test
 npm run build
 npm run test:e2e
@@ -85,7 +108,7 @@ VITE_USE_MOCK=true
 
 Для live-показа выберите два DOCX вместо демодокументов. До ответа показано ожидание без вымышленных процентов и стадий; после ответа «Действия сервиса» показывает распознанные завершённые действия из `agent_trace`. Это журнал действий, не поток прогресса и не chain-of-thought. При сбое можно явно перейти к `DEMO DATA`, не меняя сборку.
 
-[Двухминутный сценарий](DEMO.md) · [Резервный показ](DEMO_BACKUP.md) · [Ответы жюри](JUDGES_QA.md).
+[Сценарий на 2–3 минуты](DEMO.md) · [Резервный показ](DEMO_BACKUP.md) · [Ответы жюри](JUDGES_QA.md) · [Текст для сдачи](SUBMISSION.md).
 
 ## Data
 
@@ -109,11 +132,12 @@ VITE_USE_MOCK=true
 
 Backend MVP для HackAlem AI 2026, спецтрек Казахтелеком. Сравнивает два DOCX и возвращает структурированный JSON с подразделениями, функциями, отношениями и точными источниками.
 
-## Быстрый запуск (Windows PowerShell, Python 3.12)
+## Быстрый запуск backend (Windows PowerShell, Python 3.12+)
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+$env:ANALYSIS_MODE = 'deterministic'
 .\.venv\Scripts\python.exe -m uvicorn backend.app:app --host 127.0.0.1 --port 8000
 ```
 
@@ -121,20 +145,17 @@ Swagger: http://127.0.0.1:8000/docs. Машиночитаемый контрак
 
 `requirements-lock.txt` фиксирует проверенное окружение, включая тестовые зависимости. Диапазоны прямых зависимостей находятся в `requirements.txt` и `requirements-dev.txt`.
 
-## Первый DOCX → JSON diff
+## DOCX → JSON через CLI
 
-В локальном `data/` ожидаются:
-
-- `Положение_о_внутреннем_аудите_редакция_8_обезличено.docx` — BEFORE;
-- `Положение_о_внутреннем_аудите_редакция_9_обезличено.docx` — AFTER.
+После успешного `scripts.smoke_known_answer` можно повторно обработать созданную им пару через CLI. Для самого CLI работающий HTTP-сервер не нужен:
 
 ```powershell
-$before = (Get-ChildItem data -Filter '*_8_*.docx').FullName
-$after = (Get-ChildItem data -Filter '*_9_*.docx').FullName
-.\.venv\Scripts\python.exe -m backend.cli $before $after --output artifacts\comparison.json
+.\.venv\Scripts\python.exe -m backend.cli artifacts\known-answer\known-before.docx artifacts\known-answer\known-after.docx --mode deterministic --output artifacts\known-answer\cli-comparison.json
 ```
 
 CLI принимает любые два DOCX, а не только контрольные редакции. `artifacts/`, входные DOCX и `.env` исключены из Git. Сохраняемый JSON содержит исходные фрагменты; он остаётся локальным. В репозитории нет копий документов или готового ответа на контрольный dataset.
+
+Документы организатора в `data/` — необязательные локальные входные данные для отдельных проверок: одна редакция `*_8_*.docx` и одна `*_9_*.docx`. Не копируйте их в Git. Их отсутствие не мешает запуску приложения и проверке `smoke_known_answer`.
 
 ## Режимы анализа
 
@@ -194,7 +215,7 @@ Remove-Item Env:LIVE_SEMANTIC_SMOKE
 git diff --check
 ```
 
-Проверка настоящего HTTP-запроса с обоими локальными DOCX (временный сервер автоматически завершается):
+Дополнительная проверка с локальными документами организатора: требует обе редакции в `data/`; на чистом клоне без этих файлов её пропустите. Скрипт сам запускает временный сервер и завершает его:
 
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.smoke_api --output artifacts\api-comparison.json
