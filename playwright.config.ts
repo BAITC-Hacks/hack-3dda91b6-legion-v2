@@ -29,7 +29,7 @@ export default defineConfig({
   projects: [
     { name: 'demo', testMatch: 'demo.spec.ts', use: { baseURL: 'http://127.0.0.1:5175' } },
     { name: 'api', testMatch: 'api.spec.ts', use: { baseURL: 'http://127.0.0.1:5176' } },
-    { name: 'live', testMatch: 'live.spec.ts', use: { baseURL: 'http://127.0.0.1:5177' } },
+    { name: 'live', testMatch: ['live.spec.ts', 'robustness.spec.ts'], use: { baseURL: 'http://127.0.0.1:5177' } },
   ],
   webServer: [
     {
