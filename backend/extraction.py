@@ -89,6 +89,24 @@ def _mentioned_units(text: str, units: list[OrganizationalUnit]):
     return children or found
 
 
+def _marked_owner(body: str, owners: list[OrganizationalUnit], units: list[OrganizationalUnit]):
+    """Narrow a shared list only for a standalone, known trailing owner marker."""
+    if len(owners) < 2:
+        return None
+    markers = list(ALIAS.finditer(body))
+    if not markers:
+        return None
+    marker = markers[-1]
+    if body[marker.end():].strip().rstrip(".;").strip():
+        return None
+    # "Reviews reports of Department X (DX)" identifies the subject of a review,
+    # not its owner. Leave such mentions in their inherited responsibility scope.
+    if _mentioned_units(body[:marker.start()], units):
+        return None
+    matched = [unit for unit in owners if marker[1] in unit.aliases]
+    return matched if len(matched) == 1 else None
+
+
 def extract_functions(doc: ParsedDocument, units: list[OrganizationalUnit]) -> list[FunctionItem]:
     functions = []
     contexts = {}
@@ -135,6 +153,11 @@ def extract_functions(doc: ParsedDocument, units: list[OrganizationalUnit]) -> l
             continue
         if len(body) < 12:
             continue
+        marked = _marked_owner(body, owners, units)
+        if marked:
+            owners, explicit = marked, True
+        # A marker remains in the original function quote; parent evidence retains
+        # the shared assignment context. Sibling clauses keep their own scope.
         for unit in owners:
             function = FunctionItem(
                 id=stable_id(unit.id, clause.id), unit_name=unit.name,

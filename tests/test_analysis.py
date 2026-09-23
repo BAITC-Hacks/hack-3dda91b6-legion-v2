@@ -88,4 +88,10 @@ def test_real_demo_golden_path():
     assert result.summary.units_after == 5
     assert result.summary.created_units == 2
     assert all(u.functions for u in result.units)
+    # The collective heading is narrowed by explicit trailing department markers.
+    for section, alias in (("5.3.2.а", "ДИТААД"), ("5.3.2.б", "ДОА")):
+        owners = [u for u in result.units if u.document == after[0].name
+                  and any(f.section == section for f in u.functions)]
+        assert len(owners) == 1
+        assert alias in owners[0].aliases
     assert AnalysisResult.model_validate_json(result.model_dump_json()) == result
