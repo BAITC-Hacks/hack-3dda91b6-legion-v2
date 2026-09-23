@@ -6,6 +6,19 @@ from .extraction import normalize, stable_id
 from .schemas import Evidence, Finding, FunctionItem, FunctionMatch, OrganizationalUnit, Transformation
 
 
+CONTROL_ACTION = re.compile(r"\b(?:аудит\w*|провер\w*|контрол\w*)\b")
+EXECUTION_ACTION = re.compile(
+    r"\b(?:исполня(?:ет|ют|ть)|утвержда(?:ет|ют|ть)|провод(?:ит|ят)\s+оплат\w*|осуществля(?:ет|ют)\s+оплат\w*)\b"
+    r"|^(?:исполнение|утверждение|проведение\s+оплат\w*|осуществление\s+оплат\w*)\b"
+)
+
+
+def positive_action(text, pattern):
+    # Do not turn "checks execution" or "within an approved budget" into the
+    # execution of the contract, or an explicitly negated action into a duty.
+    return any(not re.search(r"\bне\s+$", text[:match.start()]) for match in pattern.finditer(text))
+
+
 def function_evidence(function: FunctionItem) -> list[Evidence]:
     return [Evidence(document=function.document, section=function.section,
                      text=function.source_text, clause_id=function.clause_id), *function.ownership_evidence]
@@ -46,8 +59,14 @@ def similarity(left: str, right: str) -> float:
 def compare_functions(before: list[FunctionItem], after: list[FunctionItem]) -> list[FunctionMatch]:
     remaining = {f.id: f for f in after}
     matches = []
-    # Exact matches take priority across the entire corpus, before fuzzy candidates.
-    ordered = sorted(before, key=lambda f: not any(f.normalized_function == a.normalized_function and f.kind == a.kind for a in after))
+    # Reserve unchanged ownership globally before assigning exact text to another
+    # department; otherwise an earlier unit can steal a later unit's retained duty.
+    exact_owners = {(f.normalized_function, f.kind, normalize(f.unit_name)) for f in after}
+    exact_texts = {(f.normalized_function, f.kind) for f in after}
+    ordered = sorted(before, key=lambda f: (
+        (f.normalized_function, f.kind, normalize(f.unit_name)) not in exact_owners,
+        (f.normalized_function, f.kind) not in exact_texts,
+    ))
     for function in ordered:
         candidates = [f for f in remaining.values() if f.kind == function.kind]
         ranked = sorted(candidates, key=lambda f: (
@@ -60,6 +79,8 @@ def compare_functions(before: list[FunctionItem], after: list[FunctionItem]) -> 
             other = None
             status = "LOST"
             explanation = "Не найден надёжный текстовый кандидат AFTER. Это потенциальная потеря, а не доказанное исключение функции."
+            if (function.normalized_function, function.kind) in exact_texts:
+                explanation = "Тот же текст обязанности присутствует в AFTER, но отдельное соответствие данному прежнему назначению не найдено. Возможна консолидация ответственности; потеря функции не доказана. Требуется проверка."
         else:
             remaining.pop(other.id)
             moved = normalize(function.unit_name) != normalize(other.unit_name)
@@ -118,11 +139,10 @@ def detect_findings(matches, before: list[FunctionItem], after: list[FunctionIte
                 recommendation="Уточнить объекты работы и разграничить ответственность.",
             ))
         if left.unit_name == right.unit_name:
-            control = re.compile(r"аудит|провер|контрол")
-            execute = re.compile(r"исполн|проводит оплат|осуществляет оплат|утвержд")
             objects = ("закуп", "платеж", "договор", "транзак")
             shared_object = any(stem in left.normalized_function and stem in right.normalized_function for stem in objects)
-            conflict = (control.search(left.normalized_function) and execute.search(right.normalized_function)) or (execute.search(left.normalized_function) and control.search(right.normalized_function))
+            conflict = ((positive_action(left.normalized_function, CONTROL_ACTION) and positive_action(right.normalized_function, EXECUTION_ACTION))
+                        or (positive_action(left.normalized_function, EXECUTION_ACTION) and positive_action(right.normalized_function, CONTROL_ACTION)))
             if shared_object and conflict:
                 findings.append(Finding(
                     id=stable_id("CONFLICT", left.id, right.id), type="CONFLICT", severity="HIGH",
