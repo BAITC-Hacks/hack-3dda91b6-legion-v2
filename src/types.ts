@@ -68,6 +68,12 @@ export interface AnalysisSummary {
   duplications: number
   potential_conflicts: number
   conclusion?: string
+  overlaps?: number
+  verified_findings?: number
+  needs_review_findings?: number
+  analytical_note?: string | null
+  note_evidence?: Evidence[]
+  note_verification_status?: VerificationStatus
 }
 
 export interface AnalysisResult {
@@ -79,4 +85,9 @@ export interface AnalysisResult {
   function_matches: FunctionMatch[]
   findings: Finding[]
   summary: AnalysisSummary
+  analysis_mode?: 'deterministic' | 'semantic'
+  agent_trace?: string[]
+  warnings?: string[]
+  clauses_before?: number
+  clauses_after?: number
 }
