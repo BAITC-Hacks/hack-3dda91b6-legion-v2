@@ -82,6 +82,70 @@ test('API unavailable: HTTP 503 is actionable and the explicit demo remains avai
 })
 
 for (const scenario of [
+  { code: 'semantic_authentication_failed', status: 503, reason: 'Сервис ИИ не прошёл авторизацию.' },
+  { code: 'semantic_model_unavailable', status: 503, reason: 'Выбранная модель ИИ недоступна серверу.' },
+  { code: 'semantic_rate_limited', status: 503, reason: 'Достигнут лимит запросов или исчерпана квота сервиса ИИ.' },
+  { code: 'semantic_timeout', status: 504, reason: 'Сервис ИИ не ответил за 120 секунд.' },
+]) {
+  test(`semantic error ${scenario.code}: safe reason, explicit demo, reset and fresh LIVE success`, async ({ page }, testInfo) => {
+    await page.clock.install()
+    const rawMessage = 'RAW_PROVIDER_MESSAGE_SENTINEL_DO_NOT_RENDER'
+    const nestedMessage = 'RAW_NESTED_PROVIDER_SENTINEL_DO_NOT_RENDER'
+    const consoleMessages: string[] = []
+    page.on('console', message => consoleMessages.push(message.text()))
+    page.on('pageerror', error => consoleMessages.push(error.message))
+    let requests = 0
+    const recoveryId = `recovered-${scenario.code}`
+    await page.route('**/api/analyze', async route => {
+      requests += 1
+      await route.fulfill(requests === 1
+        ? { status: scenario.status, contentType: 'application/json', body: JSON.stringify({
+            error: { code: scenario.code, message: rawMessage, provider: { message: nestedMessage } },
+          }) }
+        : { status: 200, contentType: 'application/json', body: JSON.stringify(emptyResult(recoveryId)) })
+    })
+
+    await selectRealDocuments(page)
+    await page.getByRole('button', { name: 'Анализировать изменения', exact: true }).click()
+    const alert = page.getByRole('alert')
+    await expect(alert).toContainText(scenario.reason)
+    await expect(alert).not.toContainText(/HTTP 50[34]/)
+    await expect(page.getByText('LIVE ANALYSIS', { exact: true })).toBeVisible()
+    await expect(page.locator('body')).not.toContainText(rawMessage)
+    await expect(page.locator('body')).not.toContainText(nestedMessage)
+    // A full demo duration passes without an implicit fallback or fabricated result.
+    await page.clock.runFor(5_000)
+    await expect(alert).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Обзор изменений', exact: true })).toHaveCount(0)
+    await expect(page.getByText('DEMO DATA', { exact: true })).toHaveCount(0)
+    expect(requests).toBe(1)
+    await page.screenshot({ path: testInfo.outputPath(`${scenario.code}.png`), animations: 'disabled' })
+
+    await alert.getByRole('button', { name: 'Загрузить демодокументы', exact: true }).click()
+    await expect(alert).toHaveCount(0)
+    await expect(page.getByText('DEMO DATA', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Анализировать изменения', exact: true }).click()
+    await page.clock.runFor(4_500)
+    await expect(page.getByRole('heading', { name: 'Обзор изменений', exact: true })).toBeVisible()
+    await expect(page.getByText('DEMO DATA', { exact: true })).toBeVisible()
+    expect(requests).toBe(1)
+
+    await page.getByRole('button', { name: 'Сбросить демо', exact: true }).click()
+    await expect(page.getByText('LIVE ANALYSIS', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Обзор изменений', exact: true })).toHaveCount(0)
+    await selectRealDocuments(page, false)
+    await page.getByRole('button', { name: 'Анализировать изменения', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Обзор изменений', exact: true })).toBeVisible()
+    await expect(page.locator('.analysis-context')).toContainText(recoveryId)
+    await expect(page.getByText('LIVE ANALYSIS', { exact: true })).toBeVisible()
+    await expect(alert).toHaveCount(0)
+    expect(requests).toBe(2)
+    expect(consoleMessages.join('\n')).not.toContain(rawMessage)
+    expect(consoleMessages.join('\n')).not.toContain(nestedMessage)
+  })
+}
+
+for (const scenario of [
   { name: 'non-JSON body', body: '<html>Unexpected upstream response</html>', detail: 'не является корректным JSON' },
   { name: 'invalid response schema', body: JSON.stringify({ analysis_id: 'broken-001' }), detail: 'before_document' },
   { name: 'partial result missing function_matches', body: JSON.stringify({ ...emptyResult(), function_matches: undefined }), detail: 'function_matches' },

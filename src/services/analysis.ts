@@ -392,6 +392,10 @@ async function apiResponseError(response: Response): Promise<AnalysisError> {
   if (response.status === 413) return new AnalysisError('validation', 'Документы превышают допустимый размер анализа. Уменьшите объём файлов и повторите запрос.')
   if (code === 'semantic_invalid_output') return new AnalysisError('malformed', 'Семантический сервис не вернул завершённый результат. Повторите анализ.')
   if (code === 'semantic_not_configured' || code === 'invalid_configuration') return new AnalysisError('unavailable', 'Режим анализа не настроен на сервере. Проверьте конфигурацию CORE или откройте учебный пример.')
+  if (code === 'semantic_authentication_failed') return new AnalysisError('unavailable', 'Сервис ИИ не прошёл авторизацию. Администратору нужно проверить ключ API на сервере. Можно открыть учебный пример.')
+  if (code === 'semantic_model_unavailable') return new AnalysisError('unavailable', 'Выбранная модель ИИ недоступна серверу. Администратору нужно проверить модель и права доступа. Можно открыть учебный пример.')
+  if (code === 'semantic_rate_limited') return new AnalysisError('unavailable', 'Достигнут лимит запросов или исчерпана квота сервиса ИИ. Повторите позже или откройте учебный пример.')
+  if (code === 'semantic_timeout') return new AnalysisError('unavailable', 'Сервис ИИ не ответил за 120 секунд. Повторите анализ или откройте учебный пример.')
   if (code === 'semantic_unavailable') return new AnalysisError('unavailable', 'Семантический сервис временно недоступен. Повторите запрос или откройте учебный пример.')
   return new AnalysisError('unavailable', `Сервис анализа вернул HTTP ${response.status}. Попробуйте ещё раз или откройте учебный пример.`)
 }
