@@ -2,7 +2,7 @@
 
 Explainable Organizational Change Agent · HackAlem AI 2026 · спецтрек «Казахтелеком».
 
-Текущие проверки интеграции и исправления сопоставления: [checkpoint 4](docs/CHECKPOINT4.md). Предыдущий полный запуск Astra через UI на документах организатора: [checkpoint 3](docs/CHECKPOINT3.md). Более ранняя интеграция: [checkpoint 2](docs/CHECKPOINT2.md).
+Текущие проверки интеграции и исправления сопоставления: [checkpoint 5](docs/CHECKPOINT5.md). Предыдущие проверки: [checkpoint 4](docs/CHECKPOINT4.md), [checkpoint 3](docs/CHECKPOINT3.md) и [checkpoint 2](docs/CHECKPOINT2.md).
 
 ## Совместный запуск без API-ключа и документов организатора
 
