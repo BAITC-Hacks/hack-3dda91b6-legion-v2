@@ -185,3 +185,54 @@ def test_preserved_relation_does_not_verify_model_embellishment(document_pair):
     verified = next(m for m in result.function_matches if m.before_function == match.before_function)
     assert verified.verification_status == "VERIFIED"
     assert "Unsupported" not in verified.explanation
+
+
+@pytest.mark.parametrize("blank", ["", " \t\n"])
+@pytest.mark.parametrize("target", ["unit", "function", "title", "explanation", "recommendation"])
+def test_blank_model_text_rejects_only_the_invalid_proposal(document_pair, blank, target):
+    before, after = [parse_document(raw, name) for raw, name in zip(document_pair, ["before.docx", "after.docx"])]
+    baseline = analyze_parsed(before, after)
+    a = next(u for u in baseline.units if u.document == before.name and u.functions)
+    b = next(u for u in baseline.units if u.document == after.name and u.functions)
+    value = proposal(conclusion="Review the documented changes.",
+                     conclusion_before_clause_ids=[before.clauses[1].id],
+                     conclusion_after_clause_ids=[after.clauses[1].id])
+    if target == "unit":
+        value.unit_relations = [UnitRelation(before_ids=[a.id], after_ids=[b.id],
+                                            type="RENAMED", confidence=0.7, explanation=blank)]
+    elif target == "function":
+        value.function_relations = [FunctionRelation(before_id=a.functions[0].id, after_ids=[b.functions[0].id],
+                                                    status="CHANGED", confidence=0.7, explanation=blank)]
+    else:
+        finding = SemanticFinding(type="MOVED", severity="MEDIUM", title="Review transfer",
+                                  explanation="Check the assignment.", confidence=0.7,
+                                  before_clause_ids=[a.functions[0].clause_id],
+                                  after_clause_ids=[b.functions[0].clause_id], recommendation="Review sources.")
+        setattr(finding, target, blank)
+        value.findings = [finding]
+
+    def handle(request):
+        return httpx.Response(200, json={
+            "id": "resp_test", "object": "response", "created_at": 0, "status": "completed",
+            "model": "test-model", "parallel_tool_calls": False, "tool_choice": "auto", "tools": [],
+            "output": [{"id": "msg_test", "type": "message", "role": "assistant", "status": "completed",
+                        "content": [{"type": "output_text", "text": value.model_dump_json(), "annotations": []}]}],
+        })
+    with OpenAI(api_key="test-placeholder", http_client=httpx.Client(transport=httpx.MockTransport(handle))) as sdk:
+        result = analyze_parsed(before, after, "semantic", OpenAISemanticAnalyzer(sdk, "test-model"))
+    assert result.transformations == baseline.transformations
+    assert result.function_matches == baseline.function_matches
+    assert result.findings == baseline.findings
+    assert result.summary.analytical_note == value.conclusion
+    assert len(result.summary.note_evidence) == 2
+    assert any("Rejected 1" in warning for warning in result.warnings)
+    assert all(item.explanation.strip() for item in result.transformations + result.function_matches + result.findings)
+
+
+def test_whitespace_only_optional_note_is_omitted(document_pair):
+    before, after = [parse_document(raw, name) for raw, name in zip(document_pair, ["before.docx", "after.docx"])]
+    value = proposal(conclusion=" \t\n", conclusion_before_clause_ids=[before.clauses[1].id],
+                     conclusion_after_clause_ids=[after.clauses[1].id])
+    result = analyze_parsed(before, after, "semantic", OpenAISemanticAnalyzer(fake_client(value), "test-model"))
+    assert result.summary.analytical_note is None
+    assert result.summary.note_evidence == []
