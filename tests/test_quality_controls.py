@@ -84,3 +84,15 @@ def test_prohibition_inside_a_function_list(make_docx, clause):
     prohibited = [f for u in result.units for f in u.functions if f.section == "5.1.1"]
     assert prohibited and all(f.kind == "PROHIBITION" for f in prohibited)
     assert not any(f.type == "CONFLICT" for f in result.findings)
+
+
+@pytest.mark.parametrize("prefix", ["Имеет право", "Вправе", "Имеют право"], ids=["singular", "entitled", "plural"])
+def test_permission_inside_a_list_is_not_an_executed_duty(make_docx, prefix):
+    raw = regulation(make_docx, ["5.1. Директор ДК:", f"5.1.1. {prefix} утверждать договоры закупок.",
+                                 "5.1.2. Проверяет договоры закупок."])
+    result = analyze(raw, raw, before_name="before.docx", after_name="after.docx")
+    items = [f for u in result.units for f in u.functions]
+    assert len(items) == 4
+    assert all(f.kind == "RIGHT" for f in items if f.section == "5.1.1")
+    assert all(f.kind == "FUNCTION" for f in items if f.section == "5.1.2")
+    assert not any(f.type == "CONFLICT" for f in result.findings)
