@@ -67,13 +67,29 @@ def compare_functions(before: list[FunctionItem], after: list[FunctionItem]) -> 
         (f.normalized_function, f.kind, normalize(f.unit_name)) not in exact_owners,
         (f.normalized_function, f.kind) not in exact_texts,
     ))
+    # Presence-based ordering alone cannot protect a retained assignment when
+    # another owner repeats the same duty. Reserve actual records, consuming each
+    # AFTER record once: same-owner exact matches, then other exact matches.
+    reserved = {}
+    for same_owner in (True, False):
+        for function in ordered:
+            if function.id in reserved:
+                continue
+            exact = [f for f in remaining.values()
+                     if f.kind == function.kind and f.normalized_function == function.normalized_function
+                     and (not same_owner or normalize(f.unit_name) == normalize(function.unit_name))]
+            if exact:
+                other = max(exact, key=lambda f: f.id)
+                reserved[function.id] = remaining.pop(other.id)
     for function in ordered:
-        candidates = [f for f in remaining.values() if f.kind == function.kind]
-        ranked = sorted(candidates, key=lambda f: (
-            f.normalized_function == function.normalized_function,
-            similarity(function.normalized_function, f.normalized_function),
-            normalize(f.unit_name) == normalize(function.unit_name), f.id), reverse=True)
-        other = ranked[0] if ranked else None
+        other = reserved.get(function.id)
+        if other is None:
+            candidates = [f for f in remaining.values() if f.kind == function.kind]
+            ranked = sorted(candidates, key=lambda f: (
+                f.normalized_function == function.normalized_function,
+                similarity(function.normalized_function, f.normalized_function),
+                normalize(f.unit_name) == normalize(function.unit_name), f.id), reverse=True)
+            other = ranked[0] if ranked else None
         score = similarity(function.normalized_function, other.normalized_function) if other else 0
         if other is None or score < 0.68:
             other = None
@@ -82,7 +98,7 @@ def compare_functions(before: list[FunctionItem], after: list[FunctionItem]) -> 
             if (function.normalized_function, function.kind) in exact_texts:
                 explanation = "Тот же текст обязанности присутствует в AFTER, но отдельное соответствие данному прежнему назначению не найдено. Возможна консолидация ответственности; потеря функции не доказана. Требуется проверка."
         else:
-            remaining.pop(other.id)
+            remaining.pop(other.id, None)
             moved = normalize(function.unit_name) != normalize(other.unit_name)
             same = function.normalized_function == other.normalized_function
             status = "MOVED" if moved else "PRESERVED" if same else "CHANGED"
